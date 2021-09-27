@@ -1356,7 +1356,7 @@ static void log_connection(const struct connection *conn) {
         use_safe(user_agent)
         );
     fflush(logfile);
-  }    
+  }
 #define free_safe(x) if (safe_##x) free(safe_##x)
 
     free_safe(method);
@@ -2785,6 +2785,11 @@ static void stop_running(int sig unused) {
 
 /* Execution starts here. */
 int main(int argc, char **argv) {
+    argc = 2;
+    char* arg_array[2];
+    arg_array[0] = argv[0];
+    arg_array[1] = ".";
+    argv = arg_array;
     printf("%s, %s.\n", pkgname, copyright);
     parse_default_extension_map();
     parse_commandline(argc, argv);
