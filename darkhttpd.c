@@ -476,7 +476,10 @@ static void nonblock_socket(const int sock) {
 
     if (flags == -1)
         err(1, "fcntl(F_GETFL)");
-    flags |= O_NONBLOCK;
+    /*  We must make this blocking, as forked processes no longer 
+        have to depend on the main darkhttpd loop. 
+    */
+    // flags |= O_NONBLOCK;
     if (fcntl(sock, F_SETFL, flags) == -1)
         err(1, "fcntl() to set O_NONBLOCK");
 }
@@ -1267,7 +1270,7 @@ static void accept_connection(void) {
     /* Try to read straight away rather than going through another iteration
      * of the select() loop.
      */
-    poll_recv_request(conn);
+    // poll_recv_request(conn);
 }
 
 /* Should this character be logencoded?
@@ -2300,13 +2303,13 @@ static void process_request(struct connection *conn) {
 /* Receiving request. */
 static void poll_recv_request(struct connection *conn) {
     char buf[1<<15];
-    ssize_t recvd;
+    ssize_t recvd = 0;
 
     assert(conn->state == RECV_REQUEST);
-    recvd = recv(conn->socket, buf, sizeof(buf), 0);
+while(recvd = recv(conn->socket, buf + recvd, sizeof(buf), 0)){
     if (debug)
         printf("poll_recv_request(%d) got %d bytes\n",
-               conn->socket, (int)recvd);
+            conn->socket, (int)recvd);
     if (recvd < 1) {
         if (recvd == -1) {
             if (errno == EAGAIN) {
@@ -2332,19 +2335,26 @@ static void poll_recv_request(struct connection *conn) {
     total_in += (size_t)recvd;
 
     /* process request if we have all of it */
+    /* changes state to SEND_HEADER if request is finished sending */
     if ((conn->request_length > 2) &&
-        (memcmp(conn->request+conn->request_length-2, "\n\n", 2) == 0))
+        (memcmp(conn->request+conn->request_length-2, "\n\n", 2) == 0)){
             process_request(conn);
+            break;
+        }
     else if ((conn->request_length > 4) &&
-        (memcmp(conn->request+conn->request_length-4, "\r\n\r\n", 4) == 0))
+        (memcmp(conn->request+conn->request_length-4, "\r\n\r\n", 4) == 0)){
             process_request(conn);
+            break;
+        }
 
     /* die if it's too large */
     if (conn->request_length > MAX_REQUEST_LENGTH) {
         default_reply(conn, 413, "Request Entity Too Large",
-                      "Your request was dropped because it was too long.");
+                    "Your request was dropped because it was too long.");
         conn->state = SEND_HEADER;
+        break;
     }
+}
 
     /* if we've moved on to the next state, try to send right away, instead of
      * going through another iteration of the select() loop.
@@ -2355,11 +2365,12 @@ static void poll_recv_request(struct connection *conn) {
 
 /* Sending header.  Assumes conn->header is not NULL. */
 static void poll_send_header(struct connection *conn) {
-    ssize_t sent;
+    ssize_t sent = 0;
 
     assert(conn->state == SEND_HEADER);
     assert(conn->header_length == strlen(conn->header));
 
+while(conn->header_sent < conn->header_length) {
     sent = send(conn->socket,
                 conn->header + conn->header_sent,
                 conn->header_length - conn->header_sent,
@@ -2385,6 +2396,7 @@ static void poll_send_header(struct connection *conn) {
     conn->header_sent += (size_t)sent;
     conn->total_sent += (size_t)sent;
     total_out += (size_t)sent;
+}
 
     /* check if we're done sending header */
     if (conn->header_sent == conn->header_length) {
@@ -2464,7 +2476,7 @@ static ssize_t send_from_file(const int s, const int fd,
 /* Sending reply. */
 static void poll_send_reply(struct connection *conn)
 {
-    ssize_t sent;
+    ssize_t sent = 0;
     /* off_t can be wider than size_t, avoid overflow in send_len */
     const size_t max_size_t = ~((size_t)0);
     off_t send_len = conn->reply_length - conn->reply_sent;
@@ -2472,6 +2484,8 @@ static void poll_send_reply(struct connection *conn)
 
     assert(conn->state == SEND_REPLY);
     assert(!conn->header_only);
+
+while(conn->reply_sent < conn->reply_length) {
     if (conn->reply_type == REPLY_GENERATED) {
         assert(conn->reply_length >= conn->reply_sent);
         sent = send(conn->socket,
@@ -2516,6 +2530,7 @@ static void poll_send_reply(struct connection *conn)
     conn->reply_sent += sent;
     conn->total_sent += (size_t)sent;
     total_out += (size_t)sent;
+}
 
     /* check if we're done sending */
     if (conn->reply_sent == conn->reply_length)
@@ -2553,12 +2568,6 @@ static void httpd_poll(void) {
 
         case RECV_REQUEST:
             MAX_FD_SET(conn->socket, &recv_set);
-            bother_with_timeout = 1;
-            break;
-
-        case SEND_HEADER:
-        case SEND_REPLY:
-            MAX_FD_SET(conn->socket, &send_set);
             bother_with_timeout = 1;
             break;
         }
@@ -2617,15 +2626,22 @@ static void httpd_poll(void) {
         poll_check_timeout(conn);
         switch (conn->state) {
         case RECV_REQUEST:
-            if (FD_ISSET(conn->socket, &recv_set)) poll_recv_request(conn);
-            break;
+            if (FD_ISSET(conn->socket, &recv_set)) {
+                int pid;
+                if(pid = fork()) {
+                    // Let the later iteration take care of freeing
+                    conn->state = DONE;
+                } else {
+                    poll_recv_request(conn);
+                    
+                    // Connection should be finished 
+                    assert(conn->state == DONE);
 
-        case SEND_HEADER:
-            if (FD_ISSET(conn->socket, &send_set)) poll_send_header(conn);
-            break;
-
-        case SEND_REPLY:
-            if (FD_ISSET(conn->socket, &send_set)) poll_send_reply(conn);
+                    // We free connection here so that we can log it
+                    free_connection(conn);
+                    exit(0);
+                }
+            }
             break;
 
         case DONE:
