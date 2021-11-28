@@ -1,4 +1,5 @@
-CC=riscv64-unknown-linux-musl-gcc
+#CC=riscv64-unknown-linux-musl-gcc
+CC=gcc
 CFLAGS?=-O
 LIBS=`[ \`uname\` = "SunOS" ] && echo -lsocket -lnsl`
 
