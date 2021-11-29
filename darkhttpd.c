@@ -289,7 +289,7 @@ static time_t now;
 /* Defaults can be overridden on the command-line */
 static const char *bindaddr;
 static uint16_t bindport = 8080;    /* or 80 if running as root */
-static int max_connections = -1;    /* kern.ipc.somaxconn */
+static int max_connections = 100;    /* kern.ipc.somaxconn */
 static const char *index_name = "index.html";
 static int no_listing = 0;
 
@@ -476,8 +476,8 @@ static void nonblock_socket(const int sock) {
 
     if (flags == -1)
         err(1, "fcntl(F_GETFL)");
-    /*  We must make this blocking, as forked processes no longer 
-        have to depend on the main darkhttpd loop. 
+    /*  We must make this blocking, as forked processes no longer
+        have to depend on the main darkhttpd loop.
     */
     // flags |= O_NONBLOCK;
     if (fcntl(sock, F_SETFL, flags) == -1)
@@ -1035,8 +1035,8 @@ static void parse_commandline(const int argc, char *argv[]) {
         exit(EXIT_SUCCESS);
     }
 
-    if (getuid() == 0)
-        bindport = 80;
+//    if (getuid() == 0)
+//        bindport = 80;
 
     wwwroot = xstrdup(argv[1]);
     /* Strip ending slash. */
@@ -2633,8 +2633,8 @@ static void httpd_poll(void) {
                     conn->state = DONE;
                 } else {
                     poll_recv_request(conn);
-                    
-                    // Connection should be finished 
+
+                    // Connection should be finished
                     assert(conn->state == DONE);
 
                     // We free connection here so that we can log it
